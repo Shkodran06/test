@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>Programmazione Turni Avanzata</title>
+<style>
+body { font-family: Arial, sans-serif; background: #f4f6f8; margin:0; padding:20px; }
+h1 { text-align:center; margin-bottom:15px; }
+.box { background:#fff; padding:15px; margin-bottom:20px; border-radius:8px; box-shadow:0 2px 6px rgba(0,0,0,0.1);}
+.grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap:10px;}
+button { padding:10px 15px; border:none; border-radius:6px; background:#1976d2; color:white; cursor:pointer;}
+button:hover { background:#125aa0;}
+textarea { width:100%; height:450px; border-radius:6px; padding:10px;}
+label { display:block; margin:5px 0;}
+</style>
+</head>
+<body>
+
+<h1>Programmazione Turni
+<button onclick="openAdmin()" style="float:right; background:#444; font-size:14px; padding:6px 12px; border-radius:20px;">Admin</button>
+</h1>
+
+<div id="mainPanel">
+
+  <div class="box">
+    <h3>Lavoratori presenti</h3>
+    <div id="presentList" class="grid"></div>
+  </div>
+
+  <div class="box">
+    <h3>Dove hai più bisogno?</h3>
+    <label><input type="radio" name="need" value="midi" checked> MIDI</label>
+    <label><input type="radio" name="need" value="stammdaten"> STAMMDATEN</label>
+  </div>
+
+  <div class="box">
+    <h3>Numero di rotazioni</h3>
+    <select id="rotations">
+      <option value="1">1 rotazione</option>
+      <option value="2">2 rotazioni</option>
+      <option value="3">3 rotazioni</option>
+    </select>
+  </div>
+
+  <div class="box">
+    <button onclick="generateRotations()">Genera programmazione</button>
+  </div>
+
+  <div class="box">
+    <h3>Risultato</h3>
+    <textarea id="output" readonly></textarea>
+  </div>
+
+</div>
+
+<div id="adminPanel" class="box" style="display:none">
+  <h3>Admin – Gestione Lavoratori</h3>
+  <input id="newName" placeholder="Nome lavoratore">
+  <button onclick="addWorker()">+</button>
+  <ul id="workerList"></ul>
+  <button onclick="closeAdmin()">Esci Admin</button>
+</div>
+
+<script>
+/* ===== DATI ===== */
+let workers = JSON.parse(localStorage.getItem("workers")) || [
+  { id: 1, name: "Moritz Löhmann", lastLoad:"leggero", friends:[] },
+  { id: 2, name: "Eduard Kovalov", lastLoad:"leggero", friends:[] },
+  { id: 3, name: "Hassan Daud", lastLoad:"leggero", friends:[] }
+];
+function saveWorkers(){ localStorage.setItem("workers", JSON.stringify(workers)); }
+
+/* ===== RENDER ===== */
+function render(){
+  const list = document.getElementById("presentList"); list.innerHTML="";
+  workers.forEach(w=>{
+    list.innerHTML += `<label>
+      <input type="checkbox" value="${w.id}"> ${w.name}
+    </label>`;
+  });
+  const adminList = document.getElementById("workerList"); adminList.innerHTML="";
+  workers.forEach(w=>{
+    adminList.innerHTML += `<li>${w.name} 
+      <button onclick="removeWorker(${w.id})">-</button>
+      <button onclick="manageFriends(${w.id})">Amici</button>
+    </li>`;
+  });
+}
+render();
+
+/* ===== ADMIN ===== */
+function openAdmin(){
+  const u = prompt("Nome utente:");
+  const p = prompt("Password:");
+  if(u==="Shkodran" && p==="Shkodran2006@"){
+    adminPanel.style.display="block"; mainPanel.style.display="none";
+  } else alert("Credenziali errate");
+}
+function closeAdmin(){ adminPanel.style.display="none"; mainPanel.style.display="block"; }
+function addWorker(){
+  const name=newName.value.trim(); if(!name) return;
+  workers.push({id:Date.now(),name,lastLoad:"leggero",friends:[]});
+  saveWorkers(); render(); newName.value="";
+}
+function removeWorker(id){ workers=workers.filter(w=>w.id!==id); saveWorkers(); render(); }
+function manageFriends(id){
+  const worker = workers.find(w=>w.id===id);
+  const names = workers.filter(w=>w.id!==id).map(w=>w.name);
+  const selected = prompt(`Inserisci nomi amici separati da virgola:\n${names.join(", ")}`);
+  if(selected){
+    const friendNames = selected.split(",").map(s=>s.trim());
+    worker.friends = workers.filter(w=>friendNames.includes(w.name)).map(w=>w.id);
+    saveWorkers(); render();
+  }
+}
+
+/* ===== RUOLI E CARICO ===== */
+const roleLoad = {
+  "SSCC Druck":"leggero",
+  "Separation":"pesante",
+  "Band":"medio",
+  "Stammdaten":"leggero",
+  "Midi":"leggero"
+};
+
+const rolePositions = {
+  "Midi":[1,2,3,4,5,6,7,8,9,10],
+  "Separation":[1,2,3],
+  "Band":[1,2],
+  "Stammdaten":[1,2,3],
+  "SSCC Druck":[1]
+};
+
+/* ===== PICK WORKER CON VICINANZA ===== */
+function pickWorkerForRole(available, assigned, loadType, role){
+  if(available.length===0) return null;
+
+  // Step 1: chi non ha fatto lo stesso load
+  let candidates = available.filter(w=>w.lastLoad!==loadType);
+  if(candidates.length===0) candidates = available.slice();
+
+  // Step 2: amici già assegnati nello stesso blocco (vicini)
+  let assignedInRole = assigned.filter(a=>a && a.role===role);
+  let friendsAvailable = candidates.filter(w=>assignedInRole.some(a=>a.worker && w.friends.includes(a.worker.id)));
+  if(friendsAvailable.length>0) candidates = friendsAvailable;
+
+  const chosen = candidates[0];
+  const idx = available.findIndex(w=>w.id===chosen.id);
+  if(idx>=0) available.splice(idx,1);
+
+  // Step 3: trova posizione più vicina libera
+  let pos;
+  for(let p of rolePositions[role]){
+    if(!assignedInRole.some(a=>a.pos===p)){ pos=p; break; }
+  }
+
+  chosen.lastLoad = loadType;
+  return {worker:chosen,pos:pos};
+}
+
+/* ===== GENERA SINGOLO TURNO ===== */
+function generateSingleShift(queue){
+  let available = queue.slice();
+  let assigned = [];
+  let out="";
+
+  function take(role){
+    const res = pickWorkerForRole(available, assigned, roleLoad[role], role);
+    assigned.push({role:role,pos:res?res.pos:null,worker:res?res.worker:null});
+    return res?res.worker:null;
+  }
+
+  // Triage
+  let p = take("SSCC Druck"); out += "SSCC Druck\n\t" + (p?p.name:"") + "\n";
+  for(let i=1;i<=3;i++){ p = take("Separation"); out += "Separation "+i+"\n\t"+(p?p.name:"")+"\n"; }
+
+  // Band
+  p = take("Band"); out += "Band SX\n\t" + (p?p.name:"")+"\n";
+  p = take("Band"); out += "Band DX\n\t" + (p?p.name:"")+"\n";
+
+  // Stammdaten
+  let need = document.querySelector("input[name='need']:checked").value;
+  let slots = need==="midi"?1:3;
+  for(let i=1;i<=slots;i++){ p = take("Stammdaten"); out += "Stammdaten "+i+"\t"+(p?p.name:"")+"\n"; }
+
+  // MIDI
+  for(let i=1;i<=10;i++){ if(available.length===0) break; p = take("Midi"); out += "Midi "+i+"\t"+(p?p.name:"")+"\n"; }
+
+  return {output:out,newQueue:queue};
+}
+
+/* ===== GENERA ROTAZIONI ===== */
+function generateRotations(){
+  const rot=parseInt(document.getElementById("rotations").value);
+  const selectedIds=[...document.querySelectorAll("#presentList input:checked")].map(i=>parseInt(i.value));
+  if(selectedIds.length===0){ alert("Seleziona almeno un lavoratore"); return; }
+  let queue=workers.filter(w=>selectedIds.includes(w.id));
+  let text="";
+  for(let r=1;r<=rot;r++){
+    text+=`===== ROTAZIONE ${r} =====\n`;
+    const result=generateSingleShift(queue);
+    text+=result.output+"\n\n";
+  }
+  document.getElementById("output").value=text;
+}
+</script>
+
+</body>
+</html>
