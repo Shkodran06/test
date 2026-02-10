@@ -162,12 +162,38 @@ function pickWorkerForRole(available, assigned, loadType, role){
 function generateSingleShift(queue){
   let available = queue.slice();
   let assigned = [];
-  let out="";
+  let out = "";
 
   function take(role){
-    const res = pickWorkerForRole(available, assigned, roleLoad[role], role);
-    assigned.push({role:role,pos:res?res.pos:null,worker:res?res.worker:null});
-    return res?res.worker:null;
+    if(available.length === 0) return null;
+
+    // Step 1: candidati che non hanno fatto lo stesso load
+    let candidates = available.filter(w=>w.lastLoad!==roleLoad[role]);
+    if(candidates.length===0) candidates = available.slice();
+
+    // Step 2: amici già assegnati nello stesso blocco (vicini)
+    let assignedInRole = assigned.filter(a=>a && a.role===role);
+    let friendsAvailable = candidates.filter(w=>assignedInRole.some(a=>a.worker && w.friends.includes(a.worker.id)));
+    if(friendsAvailable.length>0) candidates = friendsAvailable;
+
+    // Step 3: prendi il primo disponibile
+    const chosen = candidates[0];
+
+    // Step 4: trova posizione libera
+    let pos;
+    for(let p of rolePositions[role]){
+      if(!assignedInRole.some(a=>a.pos===p)){ pos=p; break; }
+    }
+
+    // Step 5: aggiorna liste
+    if(chosen){
+      const idx = available.findIndex(w=>w.id===chosen.id);
+      if(idx>=0) available.splice(idx,1);
+      chosen.lastLoad = roleLoad[role];
+      assigned.push({role:role,pos:pos,worker:chosen});
+      return chosen;
+    }
+    return null;
   }
 
   // Triage
@@ -179,7 +205,7 @@ function generateSingleShift(queue){
   p = take("Band"); out += "Band DX\n\t" + (p?p.name:"")+"\n";
 
   // Stammdaten
-  let need = document.querySelector("input[name='need']:checked").value;
+  let need = document.querySelector("input[name='need']:checked').value;
   let slots = need==="midi"?1:3;
   for(let i=1;i<=slots;i++){ p = take("Stammdaten"); out += "Stammdaten "+i+"\t"+(p?p.name:"")+"\n"; }
 
